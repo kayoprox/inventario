@@ -1,0 +1,10 @@
+inventario.db
+inventario.db-*
+endereco.txt
+repor-admin.txt
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.spec
