@@ -2,7 +2,7 @@
 {% macro lista(nome, rotulo, opcoes, estado=false) %}
 <div class="fld"><span class="lbl" id="l-{{nome}}">{{rotulo}}</span><div class="sel" data-sel>
 <input type="hidden" name="{{nome}}" value="{{opcoes[0]}}">
-<button type="button" class="i selb" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="l-{{nome}}"><span class="sv">{% if estado %}{{ eic(opcoes[0],18) }}{% endif %}<span>{{ opcoes[0]|capitalize if estado else opcoes[0] }}</span></span>{{ icone('down',18) }}</button>
+<button type="button" class="i selb" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="l-{{nome}}"><span class="sv">{% if estado %}{{ eic(opcoes[0],18) }}{% endif %}<span>{{ opcoes[0]|capitalize if estado else opcoes[0] }}</span></span><span class="chev">{{ icone('down',18) }}</span></button>
 <ul class="g selm" role="listbox" tabindex="-1" hidden>{% for o in opcoes %}<li role="option" data-v="{{o}}" tabindex="-1" aria-selected="{{'true' if loop.first else 'false'}}">{% if estado %}{{ eic(o,18) }}{% endif %}<span>{{ o|capitalize if estado else o }}</span></li>{% endfor %}</ul></div></div>
 {% endmacro %}
 <form method="post" class="dlg g"><div class="row"><h2>Novo equipamento</h2><a class="ib" href="/" aria-label="Fechar">{{ icone('close') }}</a></div>

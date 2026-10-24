@@ -47,8 +47,9 @@ option{background:#1c1c1e;color:#f5f5f7}
 @media(min-width:900px){.dlg{max-width:900px;padding:28px;gap:20px}.grid{grid-template-columns:1fr 1fr;gap:16px 20px}}
 .fld{display:block}.lbl{display:block;font-size:12px;color:var(--mut)}.sel{position:relative}
 .selb{display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;cursor:pointer}.sv{display:flex;align-items:center;gap:10px;min-width:0}
-.selb svg:last-child{color:var(--mut);transition:transform .3s var(--e)}.selb[aria-expanded=true] svg:last-child{transform:rotate(180deg)}
+.chev{display:inline-flex;flex:none;color:var(--mut);transition:transform .3s var(--e)}.selb[aria-expanded=true] .chev{transform:rotate(180deg)}
 .selm{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:8;margin:0;padding:6px;list-style:none;max-height:300px;overflow:auto;background:rgba(24,24,24,.97);animation:pop .3s var(--e) both;transform-origin:top}
 .selm li{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:12px;cursor:pointer;color:#c9c9ce;font-size:15px}
 .selm li:hover,.selm li:focus{background:rgba(255,255,255,.08);color:var(--fg);outline:0}.selm li[aria-selected=true]{color:var(--fg);font-weight:650}
 .selm li[aria-selected=true]::after{content:'';margin-left:auto;flex:none;width:16px;height:16px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f5f7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/contain no-repeat}
+.selm{background:#1a1a1c;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:0 18px 40px rgba(0,0,0,.65)}.elev{position:relative;z-index:20}

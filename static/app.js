@@ -3,17 +3,18 @@
   function set(o) { if (!m) return; m.hidden = !o; bs.forEach(function (b) { b.setAttribute('aria-expanded', o); }); }
   bs.forEach(function (b) { b.addEventListener('click', function (e) { e.stopPropagation(); set(m.hidden); }); });
 
+  function bloco(w) { var x = w; while (x.parentElement && !x.parentElement.classList.contains('dlg')) x = x.parentElement; return x; }
   function fechaListas(exceto) {
     document.querySelectorAll('[data-sel]').forEach(function (w) {
       if (w === exceto) return;
-      w.querySelector('.selm').hidden = true; w.querySelector('.selb').setAttribute('aria-expanded', 'false');
+      w.querySelector('.selm').hidden = true; w.querySelector('.selb').setAttribute('aria-expanded', 'false'); bloco(w).classList.remove('elev');
     });
   }
   document.querySelectorAll('[data-sel]').forEach(function (w) {
     var b = w.querySelector('.selb'), l = w.querySelector('.selm'), h = w.querySelector('input'), v = w.querySelector('.sv');
     var itens = Array.prototype.slice.call(l.querySelectorAll('li'));
     function abre(o) {
-      l.hidden = !o; b.setAttribute('aria-expanded', o);
+      l.hidden = !o; b.setAttribute('aria-expanded', o); bloco(w).classList.toggle('elev', o);
       if (o) (l.querySelector('[aria-selected=true]') || itens[0]).focus();
     }
     function escolhe(li) {
