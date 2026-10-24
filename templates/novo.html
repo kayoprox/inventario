@@ -1,11 +1,16 @@
 {% extends 'base.html' %}{% block t %}Novo equipamento{% endblock %}{% block c %}
 <form method="post" class="dlg g"><div class="row"><h2>Novo equipamento</h2><a class="ib" href="/" aria-label="Fechar">{{ icone('close') }}</a></div>
-<label>Tipo<select class="i" name="tipo">{% for t in tipos %}<option>{{t}}</option>{% endfor %}</select></label>
-<label>Marca / modelo<input class="i" name="modelo" required placeholder="Dell Latitude 5420"></label>
-<label>Localização<input class="i" name="local" list="ls" placeholder="Sala 12"></label><datalist id="ls">{% for l in locais %}<option>{{l.nome}}</option>{% endfor %}</datalist>
-<label>Responsável<input class="i" name="resp" list="rs" placeholder="Opcional"></label><datalist id="rs">{% for r in resps %}<option>{{r.nome}}</option>{% endfor %}</datalist>
-<details class="mais"><summary>Mais detalhes {{ icone('down',20) }}</summary><div style="display:flex;flex-direction:column;gap:12px;padding-bottom:12px">
-<label>Nº de série<input class="i" name="n_serie"></label><label>Data de aquisição<input class="i" type="date" name="data_aquisicao"></label>
-<label>Estado<select class="i" name="estado">{% for s in ESTADOS %}<option>{{s}}</option>{% endfor %}</select></label>
-<label>Manutenção de X em X meses<input class="i" type="number" name="intervalo" value="12"></label><label>Notas<textarea class="i" name="notas" rows="2"></textarea></label></div></details>
+<fieldset class="opts"><legend>Tipo</legend><div class="ps">{% for t in tipos %}<label class="op"><input type="radio" name="tipo" value="{{t}}" {{'checked' if loop.first}}><span>{{t}}</span></label>{% endfor %}</div></fieldset>
+<div class="grid">
+<label class="full">Marca / modelo<input class="i" name="modelo" required placeholder="Dell Latitude 5420"></label>
+<label>Localização<input class="i" name="local" list="ls" placeholder="Sala 12"></label>
+<label>Responsável<input class="i" name="resp" list="rs" placeholder="Opcional"></label>
+</div>
+<datalist id="ls">{% for l in locais %}<option>{{l.nome}}</option>{% endfor %}</datalist><datalist id="rs">{% for r in resps %}<option>{{r.nome}}</option>{% endfor %}</datalist>
+<details class="mais"><summary>Mais detalhes {{ icone('down',20) }}</summary><div class="grid" style="padding-bottom:14px">
+<label>Nº de série<input class="i" name="n_serie"></label>
+<label>Data de aquisição<input class="i" type="date" name="data_aquisicao"></label>
+<fieldset class="opts full"><legend>Estado inicial</legend><div class="ps">{% for s in ESTADOS %}<label class="op"><input type="radio" name="estado" value="{{s}}" {{'checked' if loop.first}}><span>{{ eic(s,18) }}{{s|capitalize}}</span></label>{% endfor %}</div></fieldset>
+<label>Manutenção de X em X meses<input class="i" type="number" name="intervalo" value="12" min="1"></label>
+<label class="full">Notas<textarea class="i" name="notas" rows="2"></textarea></label></div></details>
 <div class="acoes"><a class="btn gh" href="/">Cancelar</a><button class="btn">Criar</button></div></form>{% endblock %}
