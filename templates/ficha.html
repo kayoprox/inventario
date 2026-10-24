@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block t %}{{e.codigo}}{% endblock %}{% block c %}
+<header class="top"><div><small class="m">{{e.tipo}} · {{e.codigo}}</small><h1>{{e.modelo or e.tipo}}</h1><p class="est">{{ eic(e.estado,20) }}{{e.estado|capitalize}}</p></div>{% if u %}<a class="ib g" href="/" aria-label="Voltar à lista">{{ icone('back') }}</a>{% endif %}</header>
+{% if not u %}<a class="g aviso" href="/login?next=/e/{{e.codigo}}">{{ icone('lock') }}<span>Entra para ver os detalhes. Se encontraste este equipamento ou precisas de ajuda, contacta o suporte.</span></a>
+{% else %}
+{% if u.perfil!='consulta' %}<section id="estado"><h3 class="lb">Alterar estado</h3><form class="seg g" method="post" action="/e/{{e.codigo}}/atualizar" role="group" aria-label="Estado">
+<input type="hidden" name="local" value="{{e.local or ''}}"><input type="hidden" name="resp" value="{{e.resp or ''}}">
+{% for s in ESTADOS %}<button name="estado" value="{{s}}" aria-pressed="{{'true' if s==e.estado else 'false'}}" aria-label="{{s|capitalize}}" title="{{s|capitalize}}">{{ eic(s,24) }}</button>{% endfor %}</form></section>{% endif %}
+<dl class="info g"><div><dt>Localização</dt><dd>{{e.local or '—'}}</dd></div><div><dt>Responsável</dt><dd>{{e.resp or '—'}}</dd></div><div><dt>Nº de série</dt><dd>{{e.n_serie or '—'}}</dd></div>
+<div><dt>Próxima manutenção</dt><dd {% if prox and prox<=hoje %}class="alerta"{% endif %}>{{prox or '—'}}</dd></div></dl>
+{% if e.notas %}<p class="m">{{e.notas}}</p>{% endif %}
+{% if u.perfil!='consulta' %}<details class="mais g"><summary>Mover, atribuir ou escrever nota {{ icone('down',20) }}</summary><form method="post" action="/e/{{e.codigo}}/atualizar"><input type="hidden" name="estado" value="{{e.estado}}">
+<label>Localização<input class="i" name="local" value="{{e.local or ''}}"></label><label>Responsável<input class="i" name="resp" value="{{e.resp or ''}}"></label>
+<label>Nota<textarea class="i" name="nota" rows="3"></textarea></label><button class="btn">Guardar como {{u.nome}}</button></form></details>{% endif %}
+<section><h3 class="lb">Histórico</h3><div class="tl">{% for x in h %}<div><small class="m">{{x.data}} · {{x.tecnico}}</small>{{x.descricao}}</div>{% else %}<p class="m">Sem histórico.</p>{% endfor %}</div></section>
+{% endif %}{% endblock %}

@@ -1,10 +1,9 @@
 """Inventário com QR codes — Flask + SQLite. Arranque: python app.py"""
-import os, sys, sqlite3, io, socket, threading, webbrowser
+import time, os, sys, sqlite3, io, socket, threading, webbrowser
 from datetime import date
 from functools import wraps
 from flask import (Flask, g, request, redirect, session, abort, Response,
                    render_template, flash)
-from jinja2 import DictLoader
 import segno, secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 from markupsafe import Markup, escape
@@ -30,7 +29,6 @@ def lan_ip():
     finally:
         s.close()
 
-PIN_INICIAL = "1234"   # o PIN passa a viver na base de dados e muda-se no menu "Mudar PIN"
 # Endereço que vai dentro dos QR codes. Por defeito, o IP detetado; para fixar, cria endereco.txt
 BASE_URL = (os.environ.get("BASE_URL") or _ler("endereco.txt", f"http://{lan_ip()}:{PORT}")).rstrip("/")
 ESTADOS = ["disponível", "em uso", "avariado", "em reparação", "abatido"]
@@ -41,9 +39,13 @@ TIPOS = ["Computador", "Portátil", "Monitor", "Projetor", "Router/Switch",
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "muda-esta-chave")
+app.config.update(SESSION_COOKIE_SAMESITE="Lax")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS config(chave TEXT PRIMARY KEY, valor TEXT);
+CREATE TABLE IF NOT EXISTS utilizador(id INTEGER PRIMARY KEY, nome TEXT NOT NULL, login TEXT UNIQUE NOT NULL,
+  hash TEXT NOT NULL, perfil TEXT NOT NULL DEFAULT 'tecnico', ativo INTEGER DEFAULT 1, trocar_pw INTEGER DEFAULT 1);
+CREATE TABLE IF NOT EXISTS tentativas(chave TEXT, ts REAL);
 CREATE TABLE IF NOT EXISTS localizacao(id INTEGER PRIMARY KEY, nome TEXT UNIQUE NOT NULL);
 CREATE TABLE IF NOT EXISTS responsavel(id INTEGER PRIMARY KEY, nome TEXT UNIQUE NOT NULL);
 CREATE TABLE IF NOT EXISTS equipamento(
@@ -76,12 +78,46 @@ def lookup(tabela, nome):
     db().execute(f"INSERT OR IGNORE INTO {tabela}(nome) VALUES(?)", (nome,))
     return q1(f"SELECT id FROM {tabela} WHERE nome=?", (nome,))["id"]
 
-def auth(f):
-    @wraps(f)
-    def w(*a, **k):
-        if not session.get("ok"): return redirect("/login?next=" + request.path)
-        return f(*a, **k)
-    return w
+NIVEL = {"consulta": 1, "tecnico": 2, "admin": 3}   # consulta só vê · técnico atualiza · admin gere tudo
+
+def atual():
+    """Utilizador com sessão iniciada (None se não houver ou se a conta foi desativada)."""
+    if "u" not in g:
+        g.u = q1("SELECT * FROM utilizador WHERE id=? AND ativo=1", (session["uid"],)) if session.get("uid") else None
+    return g.u
+
+@app.context_processor
+def _ctx(): return {"u": atual()}
+
+def papel(minimo):
+    def deco(f):
+        @wraps(f)
+        def w(*a, **k):
+            u = atual()
+            if not u: return redirect("/login?next=" + request.path)
+            if u["trocar_pw"] and request.endpoint not in ("conta", "sair"): return redirect("/conta")
+            if NIVEL[u["perfil"]] < NIVEL[minimo]: abort(403)
+            return f(*a, **k)
+        return w
+    return deco
+
+def ip(): return (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()
+
+def bloqueado(login):
+    """5 falhas por utilizador ou 20 por IP nos últimos 10 minutos bloqueiam novas tentativas."""
+    db().execute("DELETE FROM tentativas WHERE ts<?", (time.time() - 600,))
+    n = lambda k: q1("SELECT COUNT(*) n FROM tentativas WHERE chave=?", (k,))["n"]
+    return n("u:" + login) >= 5 or n("ip:" + ip()) >= 20
+
+def falhou(login):
+    for k in ("u:" + login, "ip:" + ip()):
+        db().execute("INSERT INTO tentativas VALUES(?,?)", (k, time.time()))
+    db().commit()
+
+def n_admins(excluir=0):
+    return q1("SELECT COUNT(*) n FROM utilizador WHERE perfil='admin' AND ativo=1 AND id!=?", (excluir,))["n"]
+
+def pw_temp(): return secrets.token_urlsafe(6)
 
 def proxima(e):
     """Data da próxima manutenção = última intervenção (ou aquisição) + intervalo."""
@@ -97,6 +133,7 @@ BASE_SQL = """SELECT e.*, l.nome local, r.nome resp FROM equipamento e
   LEFT JOIN responsavel r ON r.id=e.responsavel_id"""
 
 @app.route("/")
+@papel("consulta")
 def index():
     t, est = request.args.get("q", "").strip(), request.args.get("estado", "")
     sql, a = BASE_SQL + " WHERE 1=1", []
@@ -113,7 +150,7 @@ def ficha(codigo):
     return render_template("ficha.html", e=e, h=h, prox=proxima(e), hoje=date.today())
 
 @app.route("/e/<codigo>/atualizar", methods=["POST"])
-@auth
+@papel("tecnico")
 def atualizar(codigo):
     e = q1(BASE_SQL + " WHERE e.codigo=?", (codigo.upper(),)) or abort(404)
     f = request.form
@@ -127,12 +164,12 @@ def atualizar(codigo):
                  (f["estado"], lookup("localizacao", novo_local), lookup("responsavel", nova_resp), e["id"]))
     if partes:
         db().execute("INSERT INTO manutencao(equipamento_id,data,tecnico,estado,descricao) VALUES(?,?,?,?,?)",
-                     (e["id"], date.today().isoformat(), f.get("tecnico", "").strip(), f["estado"], " · ".join(partes)))
+                     (e["id"], date.today().isoformat(), atual()["nome"], f["estado"], " · ".join(partes)))
     db().commit(); flash("Guardado.")
     return redirect(f"/e/{e['codigo']}")
 
 @app.route("/novo", methods=["GET", "POST"])
-@auth
+@papel("tecnico")
 def novo():
     if request.method == "POST":
         f = request.form
@@ -149,7 +186,7 @@ def novo():
         locais=q("SELECT nome FROM localizacao"), resps=q("SELECT nome FROM responsavel"))
 
 @app.route("/admin")
-@auth
+@papel("admin")
 def admin():
     por_estado = {r["estado"]: r["n"] for r in q("SELECT estado, COUNT(*) n FROM equipamento GROUP BY estado")}
     total = sum(por_estado.values())
@@ -161,11 +198,18 @@ def admin():
         ON e.id=m.equipamento_id WHERE m.estado='avariado' GROUP BY e.id ORDER BY n DESC LIMIT 5""")
     por_local = q("""SELECT COALESCE(l.nome,'Sem local') nome, COUNT(*) n FROM equipamento e
         LEFT JOIN localizacao l ON l.id=e.localizacao_id GROUP BY 1 ORDER BY n DESC""")
-    return render_template("admin.html", total=total, pe=por_estado, antigos=antigos,
-        atrasados=atrasados, avarias=avarias, por_local=por_local, hoje=date.today())
+    ativos = sum(por_estado.get(e, 0) for e in ESTADOS[:4]); off, anel = 0, []
+    for e in ESTADOS[:4]:
+        n = por_estado.get(e, 0); d = 282.7 * n / ativos if ativos else 0
+        anel.append((e, n, round(d, 1), round(-off, 1), EST_ICON[e][1])); off += d
+    salas = q("""SELECT COALESCE(l.nome,'Sem local') nome, COALESCE(SUM(e.estado IN ('avariado','em reparação')),0) n
+        FROM equipamento e LEFT JOIN localizacao l ON l.id=e.localizacao_id WHERE e.estado!='abatido' GROUP BY 1 ORDER BY n DESC, nome""")
+    mx = max([x["n"] for x in salas] + [1])
+    return render_template("admin.html", total=total, anel=anel, salas=salas, mx=mx, antigos=antigos,
+                           atrasados=atrasados, avarias=avarias, hoje=date.today())
 
 @app.route("/etiquetas")
-@auth
+@papel("tecnico")
 def etiquetas():
     return render_template("etiquetas.html", eqs=q(BASE_SQL + " ORDER BY e.codigo"))
 
@@ -179,114 +223,126 @@ def qr(codigo):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if check_password_hash(q1("SELECT valor FROM config WHERE chave='pin'")["valor"], request.form["pin"]):
-            session["ok"] = True; session.permanent = True
-            nxt = request.args.get("next", "/")
-            return redirect(nxt if nxt.startswith("/") else "/")
-        flash("PIN errado.")
-    return render_template("login.html")
-
-@app.route("/pin", methods=["GET", "POST"])
-@auth
-def mudar_pin():
-    if request.method == "POST":
-        f = request.form
-        if not check_password_hash(q1("SELECT valor FROM config WHERE chave='pin'")["valor"], f["atual"]):
-            flash("PIN atual errado.")
-        elif len(f["novo"]) < 4:
-            flash("O novo PIN deve ter pelo menos 4 caracteres.")
-        elif f["novo"] != f["confirma"]:
-            flash("Os dois PIN novos não coincidem.")
+        lg = request.form.get("login", "").strip().lower()
+        if bloqueado(lg):
+            flash("Demasiadas tentativas. Aguarda 10 minutos e tenta de novo.")
         else:
-            db().execute("UPDATE config SET valor=? WHERE chave='pin'", (generate_password_hash(f["novo"]),))
-            db().commit(); flash("PIN alterado."); return redirect("/")
-    return render_template("pin.html")
+            x = q1("SELECT * FROM utilizador WHERE login=? AND ativo=1", (lg,))
+            if x and check_password_hash(x["hash"], request.form.get("pw", "")):
+                db().execute("DELETE FROM tentativas WHERE chave=?", ("u:" + lg,)); db().commit()
+                session.clear(); session["uid"] = x["id"]; session.permanent = True
+                nxt = request.args.get("next", "/")
+                return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else "/")
+            falhou(lg); flash("Utilizador ou palavra-passe errados.")
+    return render_template("login.html")
 
 @app.route("/sair")
 def sair(): session.clear(); return redirect("/")
 
-# ---------- Templates (tudo num só ficheiro para ser fácil de copiar) ----------
-BASE = """<!doctype html><html lang="pt"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Inventário</title>
-<style>:root{--bg:#f6f7f9;--fg:#1c2330;--card:#fff;--mut:#6b7585;--ac:#1f5eff;--bd:#e2e5ea}
-@media(prefers-color-scheme:dark){:root{--bg:#12151b;--fg:#e8ebf0;--card:#1b2029;--mut:#98a2b3;--ac:#6b93ff;--bd:#2a313d}}
-*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
-nav{display:flex;gap:16px;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--bd);flex-wrap:wrap}
-nav a{color:var(--fg);text-decoration:none;font-weight:600}main{max-width:760px;margin:0 auto;padding:16px}
-.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
-a{color:var(--ac)}input,select,textarea,button{font:inherit;width:100%;padding:10px;margin:4px 0 10px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)}
-button{background:var(--ac);color:#fff;border:0;font-weight:600;cursor:pointer}label{font-size:13px;color:var(--mut)}
-.b{display:inline-block;padding:2px 10px;border-radius:99px;font-size:13px;font-weight:600;color:#fff}
-.row{display:flex;justify-content:space-between;gap:8px;align-items:center}.m{color:var(--mut);font-size:14px}
-.k{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}.k b{font-size:28px;display:block}
-.msg{background:#d3f5df;color:#14532d;padding:10px;border-radius:8px;margin-bottom:12px}
-table{width:100%;border-collapse:collapse}td,th{padding:6px 4px;border-bottom:1px solid var(--bd);text-align:left;font-size:14px}
-@media print{nav,.np{display:none}body{background:#fff}}</style>
-<nav class="np"><a href="/">📦 Inventário</a><a href="/novo">+ Novo</a><a href="/admin">Painel</a>
-<a href="/etiquetas">Etiquetas</a>{% if session.ok %}<a href="/pin">Mudar PIN</a><a href="/sair">Sair</a>{% else %}<a href="/login">Entrar</a>{% endif %}</nav>
-<main>{% for m in get_flashed_messages() %}<div class="msg np">{{m}}</div>{% endfor %}{% block c %}{% endblock %}</main></html>"""
+@app.route("/conta", methods=["GET", "POST"])
+@papel("consulta")
+def conta():
+    u = atual()
+    if request.method == "POST":
+        f = request.form
+        if not check_password_hash(u["hash"], f["atual"]): flash("Palavra-passe atual errada.")
+        elif len(f["nova"]) < 8: flash("A nova palavra-passe deve ter pelo menos 8 caracteres.")
+        elif f["nova"] != f["confirma"]: flash("As duas palavras-passe novas não coincidem.")
+        elif f["nova"] == f["atual"]: flash("Escolhe uma palavra-passe diferente da atual.")
+        else:
+            db().execute("UPDATE utilizador SET hash=?, trocar_pw=0 WHERE id=?", (generate_password_hash(f["nova"]), u["id"]))
+            db().commit(); flash("Palavra-passe alterada."); return redirect("/")
+    return render_template("conta.html")
 
+@app.route("/utilizadores")
+@papel("admin")
+def utilizadores():
+    return render_template("utilizadores.html", users=q("SELECT * FROM utilizador ORDER BY ativo DESC, nome"))
 
-T = {
-"base.html": BASE,
-"lista.html": """{% extends 'base.html' %}{% block c %}
-<form method="get" class="row" style="gap:8px"><input name="q" value="{{t}}" placeholder="Procurar código, série, sala, pessoa…">
-<select name="estado" style="width:auto"><option value="">Todos</option>{% for s in ESTADOS %}<option {{'selected' if s==est}}>{{s}}</option>{% endfor %}</select>
-<button style="width:auto">Ir</button></form>
-{% for e in eqs %}<a href="/e/{{e.codigo}}" style="text-decoration:none;color:inherit"><div class="c"><div class="row"><b>{{e.codigo}} · {{e.tipo}}</b>{{badge(e.estado)}}</div>
-<div class="m">{{e.modelo}} · {{e.local or 'Sem local'}} · {{e.resp or 'Sem responsável'}}</div></div></a>
-{% else %}<p class="m">Sem resultados.</p>{% endfor %}{% endblock %}""",
-"ficha.html": """{% extends 'base.html' %}{% block c %}
-<div class="c"><div class="row"><h2 style="margin:0">{{e.codigo}}</h2>{{badge(e.estado)}}</div>
-<p><b>{{e.tipo}}</b> — {{e.modelo}}<br>Nº série: {{e.n_serie or '—'}}<br>Adquirido: {{e.data_aquisicao or '—'}}<br>
-📍 {{e.local or '—'}}<br>👤 {{e.resp or '—'}}<br>
-🔧 Próxima manutenção: {% if prox %}<b style="color:{{'#c62828' if prox<=hoje}}">{{prox}}</b>{% else %}—{% endif %}</p>
-{% if e.notas %}<p class="m">{{e.notas}}</p>{% endif %}</div>
-{% if session.ok %}<form method="post" action="/e/{{e.codigo}}/atualizar" class="c"><h3 style="margin-top:0">Atualizar</h3>
-<label>Estado</label><select name="estado">{% for s in ESTADOS %}<option {{'selected' if s==e.estado}}>{{s}}</option>{% endfor %}</select>
-<label>Localização</label><input name="local" value="{{e.local or ''}}"><label>Responsável</label><input name="resp" value="{{e.resp or ''}}">
-<label>O que foi feito / observações</label><textarea name="nota" rows="3"></textarea>
-<label>Técnico</label><input name="tecnico"><button>Guardar</button></form>
-{% else %}<a class="c" style="display:block" href="/login?next=/e/{{e.codigo}}">🔒 Entrar como técnico para atualizar</a>{% endif %}
-<h3>Histórico</h3>{% for x in h %}<div class="c"><div class="row"><b>{{x.data}}</b><span class="m">{{x.tecnico}}</span></div>{{x.descricao}}</div>
-{% else %}<p class="m">Sem histórico.</p>{% endfor %}{% endblock %}""",
-"novo.html": """{% extends 'base.html' %}{% block c %}<h2>Novo equipamento</h2>
-<form method="post" class="c"><label>Tipo</label><select name="tipo">{% for t in tipos %}<option>{{t}}</option>{% endfor %}</select>
-<label>Marca / modelo</label><input name="modelo" required><label>Nº de série</label><input name="n_serie">
-<label>Data de aquisição</label><input type="date" name="data_aquisicao"><label>Estado</label><select name="estado">{% for s in ESTADOS %}<option>{{s}}</option>{% endfor %}</select>
-<label>Localização</label><input name="local" list="ls"><datalist id="ls">{% for l in locais %}<option>{{l.nome}}</option>{% endfor %}</datalist>
-<label>Responsável</label><input name="resp" list="rs"><datalist id="rs">{% for r in resps %}<option>{{r.nome}}</option>{% endfor %}</datalist>
-<label>Manutenção de X em X meses</label><input type="number" name="intervalo" value="12"><label>Notas</label><textarea name="notas"></textarea>
-<button>Criar e gerar QR</button></form>{% endblock %}""",
-"admin.html": """{% extends 'base.html' %}{% block c %}<h2>Painel</h2>
-<div class="k"><div class="c"><b>{{total}}</b>total</div>{% for s in ESTADOS %}<div class="c"><b style="color:{{COR[s]}}">{{pe.get(s,0)}}</b>{{s}}</div>{% endfor %}</div>
-<div class="c"><h3 style="margin-top:0">🔧 Manutenção em atraso ({{atrasados|length}})</h3><table>{% for d,e in atrasados %}<tr><td><a href="/e/{{e.codigo}}">{{e.codigo}}</a></td><td>{{e.tipo}} {{e.modelo}}</td><td>{{d}}</td></tr>{% else %}<tr><td>Tudo em dia ✅</td></tr>{% endfor %}</table></div>
-<div class="c"><h3 style="margin-top:0">⏳ Mais antigos (a substituir)</h3><table>{% for e in antigos %}<tr><td><a href="/e/{{e.codigo}}">{{e.codigo}}</a></td><td>{{e.tipo}} {{e.modelo}}</td><td>{{e.data_aquisicao}} ({{hoje.year-e.data_aquisicao[:4]|int}} anos)</td></tr>{% endfor %}</table></div>
-<div class="c"><h3 style="margin-top:0">🚨 Mais avarias</h3><table>{% for e in avarias %}<tr><td><a href="/e/{{e.codigo}}">{{e.codigo}}</a></td><td>{{e.tipo}} {{e.modelo}}</td><td>{{e.n}}×</td></tr>{% else %}<tr><td>Sem avarias registadas.</td></tr>{% endfor %}</table></div>
-<div class="c"><h3 style="margin-top:0">📍 Por localização</h3><table>{% for l in por_local %}<tr><td>{{l.nome}}</td><td>{{l.n}}</td></tr>{% endfor %}</table></div>{% endblock %}""",
-"etiquetas.html": """{% extends 'base.html' %}{% block c %}<p class="np m">Imprime esta página (Ctrl+P) em etiquetas autocolantes ou papel normal e recorta.</p>
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">{% for e in eqs %}
-<div style="border:1px dashed #888;padding:8px;text-align:center;background:#fff;color:#000;break-inside:avoid"><img src="/qr/{{e.codigo}}.svg" width="120"><br><b>{{e.codigo}}</b><br><small>{{e.tipo}}</small></div>{% endfor %}</div>{% endblock %}""",
-"pin.html": """{% extends 'base.html' %}{% block c %}<form method="post" class="c"><h3 style="margin-top:0">Mudar PIN</h3>
-<label>PIN atual</label><input type="password" name="atual" required><label>Novo PIN (mínimo 4 caracteres)</label><input type="password" name="novo" required>
-<label>Repetir novo PIN</label><input type="password" name="confirma" required><button>Guardar</button></form>{% endblock %}""",
-"login.html": """{% extends 'base.html' %}{% block c %}<form method="post" class="c"><h3 style="margin-top:0">Entrar (técnicos)</h3>
-<input type="password" name="pin" placeholder="PIN" inputmode="numeric" autofocus><button>Entrar</button></form>{% endblock %}""",
+@app.route("/utilizadores/novo", methods=["POST"])
+@papel("admin")
+def utilizador_novo():
+    f = request.form; lg = f["login"].strip().lower(); nome = f["nome"].strip()
+    if f["perfil"] not in NIVEL or not lg or not nome: abort(400)
+    if q1("SELECT 1 FROM utilizador WHERE login=?", (lg,)): flash("Esse utilizador já existe.")
+    else:
+        pw = pw_temp()
+        db().execute("INSERT INTO utilizador(nome,login,hash,perfil) VALUES(?,?,?,?)", (nome, lg, generate_password_hash(pw), f["perfil"]))
+        db().commit()
+        flash(f"Conta criada. Utilizador: {lg} · Palavra-passe temporária: {pw} (só aparece agora; terá de a mudar no primeiro acesso).")
+    return redirect("/utilizadores")
+
+@app.route("/utilizadores/<int:uid>/<acao>", methods=["POST"])
+@papel("admin")
+def utilizador_acao(uid, acao):
+    x = q1("SELECT * FROM utilizador WHERE id=?", (uid,)) or abort(404)
+    ultimo = x["perfil"] == "admin" and x["ativo"] and n_admins(uid) == 0
+    if acao in NIVEL:
+        if ultimo and acao != "admin": flash("Tem de existir pelo menos um administrador ativo.")
+        else: db().execute("UPDATE utilizador SET perfil=? WHERE id=?", (acao, uid)); flash("Perfil alterado.")
+    elif acao == "ativar":
+        if x["ativo"] and (uid == atual()["id"] or ultimo): flash("Não podes desativar esta conta.")
+        else: db().execute("UPDATE utilizador SET ativo=? WHERE id=?", (0 if x["ativo"] else 1, uid)); flash("Estado da conta alterado.")
+    elif acao == "repor":
+        pw = pw_temp()
+        db().execute("UPDATE utilizador SET hash=?, trocar_pw=1 WHERE id=?", (generate_password_hash(pw), uid))
+        flash(f"Nova palavra-passe temporária de {x['login']}: {pw}")
+    else: abort(404)
+    db().commit(); return redirect("/utilizadores")
+
+PATHS = {
+ "list": '<path d="M4 6h16M4 12h16M4 18h16"/>', "plus": '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+ "pie": '<path d="M21 12a9 9 0 1 1-9-9v9z"/>', "more": '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+ "kebab": '<circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/>',
+ "search": '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>', "tag": '<path d="M4 7h16M4 12h16M4 17h10"/>',
+ "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+ "lock": '<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+ "out": '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+ "up": '<path d="M7 14l5-5 5 5"/>', "down": '<path d="M6 9l6 6 6-6"/>', "back": '<path d="M15 5l-7 7 7 7"/>',
+ "close": '<path d="M6 6l12 12M18 6L6 18"/>', "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+ "play": '<path d="M8 5.5v13l10.5-6.5z"/>', "x": '<path d="M6 6l12 12M18 6L6 18"/>',
+ "arc": '<path d="M21 12a9 9 0 1 1-6.2-8.55"/>', "minus": '<path d="M6 12h12"/>',
 }
-app.jinja_loader = DictLoader(T)
-def badge(s):
-    return Markup(f'<span class="b" style="background:{COR.get(s, "#6b7585")}">{escape(s)}</span>')
+EST_ICON = {"disponível": ("check", "#8fc9a6"), "em uso": ("play", "#9bb0c4"), "avariado": ("x", "#d98473"),
+            "em reparação": ("arc", "#d4a95a"), "abatido": ("minus", "#8e8e93")}
 
-app.jinja_env.globals.update(ESTADOS=ESTADOS, COR=COR, badge=badge)
+def icone(n, tam=20):
+    return Markup(f'<svg width="{tam}" height="{tam}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+                  f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{PATHS[n]}</svg>')
+
+def eic(estado, tam=22):
+    n, c = EST_ICON.get(estado, ("minus", "#8e8e93"))
+    return Markup(f'<span class="ei" role="img" aria-label="{escape(estado)}" title="{escape(estado)}" style="color:{c}">{icone(n, tam)}</span>')
+
+app.jinja_env.globals.update(ESTADOS=ESTADOS, icone=icone, eic=eic)
+
+# --- Alterações futuras à base de dados ---
+# Para acrescentar um campo/tabela: junta uma linha NO FIM desta lista (nunca edites nem apagues as antigas).
+# Cada alteração é aplicada uma só vez, automaticamente, ao arrancar (no PC e no servidor).
+MIGRACOES = [
+    # "ALTER TABLE equipamento ADD COLUMN garantia_ate TEXT",
+]
+
+def migrar():
+    v = db().execute("PRAGMA user_version").fetchone()[0]
+    for i, sql in enumerate(MIGRACOES[v:], start=v):
+        db().execute(sql)
+        db().execute(f"PRAGMA user_version={i + 1}")
+    db().commit()
 
 with app.app_context():
     db().executescript(SCHEMA)
-    db().execute("INSERT OR IGNORE INTO config VALUES('pin',?)", (generate_password_hash(PIN_INICIAL),))
+    migrar()
     db().execute("INSERT OR IGNORE INTO config VALUES('secret',?)", (secrets.token_hex(32),))
-    # Esqueceste o PIN? Cria um ficheiro vazio "repor-pin.txt" ao lado do programa e reinicia: o PIN volta a 1234.
-    _rep = os.path.join(PASTA, "repor-pin.txt")
+    if not q1("SELECT 1 FROM utilizador"):   # 1.º arranque: cria o administrador (aproveita o PIN antigo, se existir)
+        _h = q1("SELECT valor FROM config WHERE chave='pin'")
+        _h = _h["valor"] if _h else generate_password_hash("1234")
+        db().execute("INSERT INTO utilizador(nome,login,hash,perfil,trocar_pw) VALUES('Administrador','admin',?,'admin',?)",
+                     (_h, int(check_password_hash(_h, "1234"))))
+    # Esqueceste a palavra-passe do admin? Cria um ficheiro vazio "repor-admin.txt" ao lado do programa e reinicia: fica admin / 1234.
+    _rep = os.path.join(PASTA, "repor-admin.txt")
     if os.path.exists(_rep):
-        db().execute("UPDATE config SET valor=? WHERE chave='pin'", (generate_password_hash(PIN_INICIAL),))
+        db().execute("UPDATE utilizador SET hash=?, perfil='admin', ativo=1, trocar_pw=1 WHERE login='admin'", (generate_password_hash("1234"),))
         os.remove(_rep)
     db().commit()
     app.secret_key = os.environ.get("SECRET_KEY") or q1("SELECT valor FROM config WHERE chave='secret'")["valor"]

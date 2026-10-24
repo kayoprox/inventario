@@ -1,0 +1,10 @@
+{% extends 'base.html' %}{% block t %}Utilizadores{% endblock %}{% block c %}
+<header class="top"><div><h1>Utilizadores</h1></div></header>
+<details class="mais g"><summary>Criar conta {{ icone('down',20) }}</summary><form method="post" action="/utilizadores/novo"><label>Nome<input class="i" name="nome" required></label>
+<label>Utilizador (para entrar)<input class="i" name="login" required autocapitalize="none"></label><label>Perfil<select class="i" name="perfil"><option value="tecnico">Técnico</option><option value="consulta">Consulta</option><option value="admin">Administrador</option></select></label>
+<button class="btn">Criar (gera palavra-passe temporária)</button></form></details>
+<div class="lista g">{% for x in users %}<div class="row"><div class="l" style="display:flex;padding:12px 8px 12px 18px"><span class="gr"><b>{{x.nome}}</b><small class="m">{{x.login}} · {{x.perfil}}{{ ' · inativo' if not x.ativo }}</small></span></div>
+<details class="kb"><summary aria-label="Ações de {{x.nome}}">{{ icone('kebab') }}</summary><div class="mn g">
+{% for p in ['consulta','tecnico','admin'] if p!=x.perfil %}<form method="post" action="/utilizadores/{{x.id}}/{{p}}"><button>Passar a {{p}}</button></form>{% endfor %}
+<form method="post" action="/utilizadores/{{x.id}}/repor"><button>Repor palavra-passe</button></form>
+{% if x.id!=u.id %}<form method="post" action="/utilizadores/{{x.id}}/ativar"><button>{{ 'Desativar' if x.ativo else 'Ativar' }}</button></form>{% endif %}</div></details></div>{% endfor %}</div>{% endblock %}

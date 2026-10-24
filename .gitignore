@@ -1,10 +1,14 @@
+# Dados e configuração do servidor: NUNCA vão para o Git
 inventario.db
 inventario.db-*
 endereco.txt
-repor-admin.txt
+repor-pin.txt
+
+# Ficheiros temporários
 __pycache__/
 *.pyc
 .venv/
 build/
 dist/
 *.spec
+repor-admin.txt

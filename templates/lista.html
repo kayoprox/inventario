@@ -1,0 +1,7 @@
+{% extends 'base.html' %}{% block c %}
+<header class="top"><div><h1>Inventário</h1><p>{{ eqs|length }} equipamentos</p></div>{% if u.perfil!='consulta' %}<a class="btn" href="/novo">Novo equipamento</a>{% endif %}</header>
+<form method="get" class="busca g">{{ icone('search') }}<input type="search" name="q" value="{{t}}" placeholder="Código, sala, pessoa…" aria-label="Pesquisar">{% if est %}<input type="hidden" name="estado" value="{{est}}">{% endif %}</form>
+<nav class="tabs" aria-label="Filtrar por estado">{% for s in [''] + ESTADOS %}<a class="pill {{'on' if s==est}}" href="/?estado={{s|urlencode}}&q={{t|urlencode}}" {% if s==est %}aria-current="true"{% endif %}>{{ s|capitalize if s else 'Todos' }}</a>{% endfor %}</nav>
+<div class="lista g">{% for e in eqs %}<div class="row"><a class="l" href="/e/{{e.codigo}}">{{ eic(e.estado) }}<span class="gr"><b>{{e.modelo or e.tipo}}</b><small class="m">{{e.codigo}} · {{e.local or 'Sem local'}}{% if e.resp %} · {{e.resp}}{% endif %}</small></span></a>
+<details class="kb"><summary aria-label="Mais ações de {{e.codigo}}">{{ icone('kebab') }}</summary><div class="mn g"><a href="/e/{{e.codigo}}">Abrir ficha</a>{% if u.perfil!='consulta' %}<a href="/e/{{e.codigo}}#estado">Alterar estado</a>{% endif %}</div></details></div>
+{% else %}<p class="m vazio">Sem resultados.</p>{% endfor %}</div>{% endblock %}

@@ -1,0 +1,4 @@
+{% extends 'base.html' %}{% block t %}A minha conta{% endblock %}{% block c %}
+<form method="post" class="dlg g"><h2>A minha conta</h2><p class="m">{{u.nome}} · {{u.perfil}}{% if u.trocar_pw %}<br><b style="color:var(--fg)">Tens de mudar a palavra-passe antes de continuar.</b>{% endif %}</p>
+<label>Palavra-passe atual<input class="i" type="password" name="atual" required></label><label>Nova (mínimo 8 caracteres)<input class="i" type="password" name="nova" required></label>
+<label>Repetir nova<input class="i" type="password" name="confirma" required></label><button class="btn">Guardar</button></form>{% endblock %}

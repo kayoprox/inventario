@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#000000">
+<title>{% block t %}Inventário{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400..800&display=swap">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body>
+{% if u %}{% set L = [('/','Lista','list',true),('/novo','Novo','plus',u.perfil!='consulta'),('/admin','Painel','pie',u.perfil=='admin')] %}
+<aside class="side"><div class="brand">Inventário</div>
+{% for h,n,i,ok in L if ok %}<a class="nl" href="{{h}}" {% if request.path==h %}aria-current="page"{% endif %}>{{ icone(i) }}{{n}}</a>{% endfor %}
+<button class="g conta" data-menu aria-expanded="false" aria-controls="menu"><span><b>{{u.nome}}</b><small class="m">{{u.perfil|capitalize}}</small></span>{{ icone('up',18) }}</button></aside>
+<nav class="tab g" aria-label="Navegação">{% for h,n,i,ok in L if ok %}<a class="nl" href="{{h}}" {% if request.path==h %}aria-current="page"{% endif %}>{{ icone(i,24) }}{{n}}</a>{% endfor %}
+<button class="nl" data-menu aria-expanded="false" aria-controls="menu">{{ icone('more',24) }}Mais</button></nav>
+<div id="menu" class="g" hidden><div class="who"><b>{{u.nome}}</b><small class="m">{{u.perfil|capitalize}} · {{u.login}}</small></div>
+{% if u.perfil!='consulta' %}<a class="nl" href="/etiquetas">{{ icone('tag') }}Etiquetas</a>{% endif %}
+{% if u.perfil=='admin' %}<a class="nl" href="/utilizadores">{{ icone('users') }}Utilizadores</a>{% endif %}
+<a class="nl" href="/conta">{{ icone('lock') }}Alterar palavra-passe</a><a class="nl" href="/sair">{{ icone('out') }}Sair</a></div>{% endif %}
+<main {% if not u %}class="solo"{% endif %}>{% for m in get_flashed_messages() %}<div class="msg">{{m}}</div>{% endfor %}{% block c %}{% endblock %}</main>
+<script src="{{ url_for('static', filename='app.js') }}" defer></script></body></html>

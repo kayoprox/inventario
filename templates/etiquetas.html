@@ -1,0 +1,3 @@
+{% extends 'base.html' %}{% block t %}Etiquetas{% endblock %}{% block c %}
+<header class="top np"><div><h1>Etiquetas</h1><p>Imprime esta página (Ctrl+P) em etiquetas autocolantes ou papel normal e recorta.</p></div></header>
+<div class="etq">{% for e in eqs %}<div><img src="/qr/{{e.codigo}}.svg" width="120" alt="QR {{e.codigo}}"><b>{{e.codigo}}</b><br><small>{{e.tipo}}</small></div>{% endfor %}</div>{% endblock %}
